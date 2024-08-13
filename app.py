@@ -1,34 +1,32 @@
-from flask import Flask, request, redirect, send_from_directory
+from flask import Flask, request, redirect, send_file
 import os
 import pytesseract
-from pdf2image import convert_from_path
+from pdf2image import convert_from_bytes
 from PIL import Image
 from docx import Document
 import re
 import openpyxl
+import tempfile
 
 app = Flask(__name__)
 
-# Configurações de diretórios
-UPLOAD_FOLDER = 'D:/zeugma/uploads'
-RESULT_FOLDER = 'D:/zeugma/results'
+# Use environment variables for configuration
+UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', '/tmp/uploads')
+RESULT_FOLDER = os.environ.get('RESULT_FOLDER', '/tmp/results')
 ALLOWED_EXTENSIONS = {'pdf', 'docx'}
 
-# Configurações de caminhos
-pytesseract.pytesseract.tesseract_cmd = r'C:\Users\43803016215\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
-poppler_path = r'C:\Program Files\poppler-24.07.0\Library\bin'
+# Remove hard-coded paths
+pytesseract.pytesseract.tesseract_cmd = 'tesseract'
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULT_FOLDER'] = RESULT_FOLDER
 
-# Função para verificar a extensão do arquivo
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Função para aplicar OCR em arquivos PDF
-def aplicar_ocr_pdf(caminho_arquivo):
+def aplicar_ocr_pdf(file_content):
     try:
-        paginas = convert_from_path(caminho_arquivo, 300, poppler_path=poppler_path)
+        paginas = convert_from_bytes(file_content)
         texto_completo = ""
         for pagina in paginas:
             texto = pytesseract.image_to_string(pagina, lang='por')
@@ -38,16 +36,13 @@ def aplicar_ocr_pdf(caminho_arquivo):
         print(f"Erro ao aplicar OCR: {e}")
         return ""
 
-# Função para salvar o texto extraído como DOCX
-def salvar_como_docx(texto, caminho_saida):
-    try:
-        doc = Document()
-        doc.add_paragraph(texto)
-        doc.save(caminho_saida)
-    except Exception as e:
-        print(f"Erro ao salvar como DOCX: {e}")
+def salvar_como_docx(texto):
+    doc = Document()
+    doc.add_paragraph(texto)
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
+        doc.save(tmp.name)
+    return tmp.name
 
-# Função para extrair os dados do documento Word
 def extrair_dados_docx(docx_file):
     try:
         document = Document(docx_file)
@@ -87,50 +82,40 @@ def extrair_dados_docx(docx_file):
         print(f"Erro ao extrair dados do DOCX: {e}")
         return {}
 
-# Função para salvar os dados no Excel
-def salvar_dados_excel(dados, excel_file):
-    try:
-        if not os.path.exists(excel_file):
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            # Cabeçalhos da planilha
-            ws['A1'] = 'Matrícula'
-            ws['B1'] = 'Nome'
-            ws['C1'] = 'Cargo'
-            ws['D1'] = 'Dias'
-            ws['E1'] = 'Cidade'
-            ws['F1'] = 'Laudo'
-            ws['G1'] = 'Data Início'
-            ws['N1'] = 'CID'
-        else:
-            wb = openpyxl.load_workbook(excel_file)
-            ws = wb.active
+def salvar_dados_excel(dados):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    # Cabeçalhos da planilha
+    headers = ['Matrícula', 'Nome', 'Cargo', 'Dias', 'Cidade', 'Laudo', 'Data Início', 'CID']
+    ws.append(headers)
 
-        # Encontrar a próxima linha disponível
-        row = ws.max_row + 1
+    # Preencher a planilha com os dados
+    ws.append([
+        dados['matricula'],
+        dados['nome'],
+        dados['cargo'],
+        dados['dias'],
+        dados['cidade'],
+        dados['laudo'],
+        dados['data_inicio'],
+        dados['cid']
+    ])
 
-        # Preencher a planilha com os dados
-        ws[f'A{row}'] = dados['matricula']
-        ws[f'B{row}'] = dados['nome']
-        ws[f'C{row}'] = dados['cargo']
-        ws[f'D{row}'] = dados['dias']
-        ws[f'E{row}'] = dados['cidade']
-        ws[f'F{row}'] = dados['laudo']
-        ws[f'G{row}'] = dados['data_inicio']
-        ws[f'N{row}'] = dados['cid']
-
-        wb.save(excel_file)
-    except Exception as e:
-        print(f"Erro ao salvar dados no Excel: {e}")
-
-# Função principal de conversão de DOCX para Excel
-def extrair_dados_docx_para_excel(docx_file, excel_file):
-    dados = extrair_dados_docx(docx_file)
-    salvar_dados_excel(dados, excel_file)
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+        wb.save(tmp.name)
+    return tmp.name
 
 @app.route('/')
 def index():
-    return send_from_directory('.', 'index.html')
+    return '''
+    <!doctype html>
+    <title>Upload new File</title>
+    <h1>Upload new File</h1>
+    <form method=post enctype=multipart/form-data action="/upload">
+      <input type=file name=file>
+      <input type=submit value=Upload>
+    </form>
+    '''
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -145,34 +130,21 @@ def upload_file():
         file_extension = file.filename.rsplit('.', 1)[1].lower()
 
         if file_extension == 'pdf':
-            filename = 'uploaded.pdf'
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(file_path)
-
             # Processamento do OCR
-            texto = aplicar_ocr_pdf(file_path)
-            docx_path = os.path.join(app.config['RESULT_FOLDER'], 'resultado.docx')  # Salvar no RESULT_FOLDER
-            salvar_como_docx(texto, docx_path)
-
-            return send_from_directory(app.config['RESULT_FOLDER'], 'resultado.docx', as_attachment=True)
+            texto = aplicar_ocr_pdf(file.read())
+            docx_path = salvar_como_docx(texto)
+            return send_file(docx_path, as_attachment=True, download_name='resultado.docx')
 
         elif file_extension == 'docx':
-            filename = 'uploaded.docx'
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(file_path)
-
             # Conversão do DOCX para Excel
-            excel_path = os.path.join(app.config['RESULT_FOLDER'], 'resultado.xlsx')
-            extrair_dados_docx_para_excel(file_path, excel_path)
-
-            return send_from_directory(app.config['RESULT_FOLDER'], 'resultado.xlsx', as_attachment=True)
+            dados = extrair_dados_docx(file)
+            excel_path = salvar_dados_excel(dados)
+            return send_file(excel_path, as_attachment=True, download_name='resultado.xlsx')
 
     return redirect(request.url)
 
 if __name__ == '__main__':
-    # Criação das pastas necessárias se não existirem
-    if not os.path.exists(UPLOAD_FOLDER):
-        os.makedirs(UPLOAD_FOLDER)
-    if not os.path.exists(RESULT_FOLDER):
-        os.makedirs(RESULT_FOLDER)
-    app.run(debug=True)
+    # Ensure the upload and result folders exist
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs(RESULT_FOLDER, exist_ok=True)
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
