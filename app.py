@@ -1,4 +1,4 @@
-from flask import Flask, request, redirect, send_file, jsonify
+from flask import Flask, request, send_file, jsonify
 import os
 import pytesseract
 from pdf2image import convert_from_bytes
@@ -15,8 +15,8 @@ UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', '/tmp/uploads')
 RESULT_FOLDER = os.environ.get('RESULT_FOLDER', '/tmp/results')
 ALLOWED_EXTENSIONS = {'pdf', 'docx'}
 
-# Remove hard-coded paths
-pytesseract.pytesseract.tesseract_cmd = 'tesseract'
+# Configure Tesseract path if needed
+pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'  # Atualize o caminho conforme necessário
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULT_FOLDER'] = RESULT_FOLDER
@@ -39,7 +39,7 @@ def aplicar_ocr_pdf(file_content):
 def salvar_como_docx(texto):
     doc = Document()
     doc.add_paragraph(texto)
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.docx', dir=RESULT_FOLDER) as tmp:
         doc.save(tmp.name)
     return tmp.name
 
@@ -101,7 +101,7 @@ def salvar_dados_excel(dados):
         dados['cid']
     ])
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx', dir=RESULT_FOLDER) as tmp:
         wb.save(tmp.name)
     return tmp.name
 
