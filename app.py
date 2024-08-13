@@ -7,6 +7,10 @@ from docx import Document
 import re
 import openpyxl
 import tempfile
+import logging
+
+# Configuração de logging
+logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
 
@@ -15,8 +19,8 @@ UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', '/tmp/uploads')
 RESULT_FOLDER = os.environ.get('RESULT_FOLDER', '/tmp/results')
 ALLOWED_EXTENSIONS = {'pdf', 'docx'}
 
-# Configure Tesseract path if needed
-pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'  # Atualize o caminho conforme necessário
+# Configuração do pytesseract
+pytesseract.pytesseract.tesseract_cmd = 'tesseract'
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULT_FOLDER'] = RESULT_FOLDER
@@ -33,22 +37,27 @@ def aplicar_ocr_pdf(file_content):
             texto_completo += texto + "\n\n"
         return texto_completo
     except Exception as e:
-        print(f"Erro ao aplicar OCR: {e}")
+        logging.error(f"Erro ao aplicar OCR: {e}")
         return ""
 
 def salvar_como_docx(texto):
-    doc = Document()
-    doc.add_paragraph(texto)
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.docx', dir=RESULT_FOLDER) as tmp:
-        doc.save(tmp.name)
-    return tmp.name
+    try:
+        doc = Document()
+        doc.add_paragraph(texto)
+        os.makedirs(RESULT_FOLDER, exist_ok=True)  # Cria o diretório se não existir
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx', dir=RESULT_FOLDER) as tmp:
+            doc.save(tmp.name)
+            logging.debug(f"Arquivo DOCX salvo em: {tmp.name}")
+        return tmp.name
+    except Exception as e:
+        logging.error(f"Erro ao salvar DOCX: {e}")
+        return ""
 
 def extrair_dados_docx(docx_file):
     try:
         document = Document(docx_file)
         text = '\n'.join([paragraph.text for paragraph in document.paragraphs])
 
-        # Padrões de regex para extração
         matricula_pattern = r"matrícula nº ([\d\.\-A-Za-z]+)"
         nome_pattern = r"servidor\(a\) ([A-Z\s]+) CPF:"
         cargo_pattern = r"Cargo de: ([A-Z\s]+)"
@@ -57,7 +66,6 @@ def extrair_dados_docx(docx_file):
         periodo_pattern = r"Por (\d+) dias (\d{2}/\d{2}/\d{4}) à (\d{2}/\d{4})"
         cid_pattern = r"CID: ([A-Z0-9\-]+)"
 
-        # Extração usando regex
         matricula = re.search(matricula_pattern, text)
         nome = re.search(nome_pattern, text)
         cargo = re.search(cargo_pattern, text)
@@ -66,7 +74,6 @@ def extrair_dados_docx(docx_file):
         periodo = re.search(periodo_pattern, text)
         cid = re.search(cid_pattern, text)
 
-        # Verificação e retorno dos dados extraídos
         return {
             'matricula': matricula.group(1) if matricula else '',
             'nome': nome.group(1) if nome else '',
@@ -79,31 +86,33 @@ def extrair_dados_docx(docx_file):
             'cid': cid.group(1) if cid else ''
         }
     except Exception as e:
-        print(f"Erro ao extrair dados do DOCX: {e}")
+        logging.error(f"Erro ao extrair dados do DOCX: {e}")
         return {}
 
 def salvar_dados_excel(dados):
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    # Cabeçalhos da planilha
-    headers = ['Matrícula', 'Nome', 'Cargo', 'Dias', 'Cidade', 'Laudo', 'Data Início', 'CID']
-    ws.append(headers)
-
-    # Preencher a planilha com os dados
-    ws.append([
-        dados['matricula'],
-        dados['nome'],
-        dados['cargo'],
-        dados['dias'],
-        dados['cidade'],
-        dados['laudo'],
-        dados['data_inicio'],
-        dados['cid']
-    ])
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx', dir=RESULT_FOLDER) as tmp:
-        wb.save(tmp.name)
-    return tmp.name
+    try:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        headers = ['Matrícula', 'Nome', 'Cargo', 'Dias', 'Cidade', 'Laudo', 'Data Início', 'CID']
+        ws.append(headers)
+        ws.append([
+            dados['matricula'],
+            dados['nome'],
+            dados['cargo'],
+            dados['dias'],
+            dados['cidade'],
+            dados['laudo'],
+            dados['data_inicio'],
+            dados['cid']
+        ])
+        os.makedirs(RESULT_FOLDER, exist_ok=True)  # Cria o diretório se não existir
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx', dir=RESULT_FOLDER) as tmp:
+            wb.save(tmp.name)
+            logging.debug(f"Arquivo XLSX salvo em: {tmp.name}")
+        return tmp.name
+    except Exception as e:
+        logging.error(f"Erro ao salvar Excel: {e}")
+        return ""
 
 @app.route('/')
 def index():
@@ -131,24 +140,26 @@ def upload_file():
 
         try:
             if file_extension == 'pdf':
-                # Processamento do OCR
                 texto = aplicar_ocr_pdf(file.read())
                 docx_path = salvar_como_docx(texto)
-                return send_file(docx_path, as_attachment=True, download_name='resultado.docx')
+                if docx_path:
+                    return send_file(docx_path, as_attachment=True, download_name='resultado.docx')
+                return jsonify({'error': 'Erro ao salvar o arquivo DOCX'}), 500
 
             elif file_extension == 'docx':
-                # Conversão do DOCX para Excel
                 dados = extrair_dados_docx(file)
                 excel_path = salvar_dados_excel(dados)
-                return send_file(excel_path, as_attachment=True, download_name='resultado.xlsx')
+                if excel_path:
+                    return send_file(excel_path, as_attachment=True, download_name='resultado.xlsx')
+                return jsonify({'error': 'Erro ao salvar o arquivo Excel'}), 500
 
         except Exception as e:
+            logging.error(f"Erro ao processar arquivo: {e}")
             return jsonify({'error': str(e)}), 500
 
     return jsonify({'error': 'Tipo de arquivo não permitido'}), 400
 
 if __name__ == '__main__':
-    # Ensure the upload and result folders exist
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     os.makedirs(RESULT_FOLDER, exist_ok=True)
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
