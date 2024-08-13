@@ -1,4 +1,4 @@
-from flask import Flask, request, redirect, send_file
+from flask import Flask, request, redirect, send_file, jsonify
 import os
 import pytesseract
 from pdf2image import convert_from_bytes
@@ -120,28 +120,32 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
-        return redirect(request.url)
+        return jsonify({'error': 'Nenhum arquivo enviado'}), 400
     
     file = request.files['file']
     if file.filename == '':
-        return redirect(request.url)
+        return jsonify({'error': 'Nenhum arquivo selecionado'}), 400
     
     if file and allowed_file(file.filename):
         file_extension = file.filename.rsplit('.', 1)[1].lower()
 
-        if file_extension == 'pdf':
-            # Processamento do OCR
-            texto = aplicar_ocr_pdf(file.read())
-            docx_path = salvar_como_docx(texto)
-            return send_file(docx_path, as_attachment=True, download_name='resultado.docx')
+        try:
+            if file_extension == 'pdf':
+                # Processamento do OCR
+                texto = aplicar_ocr_pdf(file.read())
+                docx_path = salvar_como_docx(texto)
+                return send_file(docx_path, as_attachment=True, download_name='resultado.docx')
 
-        elif file_extension == 'docx':
-            # Conversão do DOCX para Excel
-            dados = extrair_dados_docx(file)
-            excel_path = salvar_dados_excel(dados)
-            return send_file(excel_path, as_attachment=True, download_name='resultado.xlsx')
+            elif file_extension == 'docx':
+                # Conversão do DOCX para Excel
+                dados = extrair_dados_docx(file)
+                excel_path = salvar_dados_excel(dados)
+                return send_file(excel_path, as_attachment=True, download_name='resultado.xlsx')
 
-    return redirect(request.url)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    return jsonify({'error': 'Tipo de arquivo não permitido'}), 400
 
 if __name__ == '__main__':
     # Ensure the upload and result folders exist
