@@ -30,8 +30,14 @@ def aplicar_ocr_pdf(file_content):
         for i, pagina in enumerate(paginas):
             # Realizar OCR na imagem
             texto = pytesseract.image_to_string(pagina)
-            logging.debug(f"Texto extraído da página {i}: {texto}")
+            if not texto.strip():
+                logging.debug(f"Texto extraído da página {i} está vazio.")
+            else:
+                logging.debug(f"Texto extraído da página {i}: {texto}")
             texto_completo += texto + "\n\n"
+        
+        if not texto_completo.strip():
+            logging.debug("Nenhum texto extraído do PDF.")
         
         return texto_completo
     except Exception as e:
